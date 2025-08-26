@@ -4,49 +4,46 @@ from transformers import pipeline
 import re
 
 #токен
-BOT_TOKEN = "8493588022:AAERXiuRXReqU__lX4Td4bZI0-L-UMK24qw"
+BOT_TOKEN = "XXXXXXXXXX"
 
-#нейросеть
-print("нейросеть для анализа тональности")
+
+print("Загружаю нейросеть для анализа тональности...")
 try:
     sentiment_analyzer = pipeline(
         "sentiment-analysis",
-        model="Tinkoff/rubert-base-cased-sentiment-new",
-        tokenizer="Tinkoff/rubert-base-cased-sentiment-new"
+        model="blanchefort/rubert-base-cased-sentiment",
+        tokenizer="blanchefort/rubert-base-cased-sentiment"
     )
-    print("Нейросеть загружена")
+    print("Нейросеть загружена!")
 except Exception as e:
     print(f"Ошибка загрузки нейросети: {e}")
     sentiment_analyzer = None
 
-
-POLITE = {"пожалуйста", "извините", "спасибо"}
-EMPATHY = {"понимаю", "сожалею", "жаль"}
-NEXT_STEPS = {"сделаю", "перезвоню", "отправлю"}
-
+#словарь рекомендаций
+POLITE = {"пожалуйста", "извините", "спасибо", "благодарю", "будьте добры"}
+EMPATHY = {"понимаю", "сожалею", "жаль", "знаю, как бывает", "это неприятно", "учту вашу ситуацию"}
+NEXT_STEPS = {"сделаю", "перезвоню", "отправлю", "уже проверяю", "решу", "свяжусь", "подскажу"}
 
 def analyze_text(text: str) -> tuple[str, list[str]]:
     """Анализ тональности"""
     try:
-        #если нейросеть работает используем ее
         if sentiment_analyzer:
-            result = sentiment_analyzer(text[:256])[0]  # Еще короче текст
-            tone_en = result['label']
+            
+            result = sentiment_analyzer(text[:512])[0]
+            label = result['label']
             confidence = result['score']
 
+            
             tone_ru = {
                 'POSITIVE': 'положительный',
                 'NEUTRAL': 'нейтральный',
-                'NEGATIVE': 'негативный',
-                'LABEL_0': 'негативный',
-                'LABEL_1': 'нейтральный',
-                'LABEL_2': 'положительный'
-            }.get(tone_en, 'нейтральный')
+                'NEGATIVE': 'негативный'
+            }.get(label, 'нейтральный')
         else:
-
+          
             words = text.lower().split()
-            pos_count = sum(1 for word in words if word in {"спасибо", "хорошо", "отлично"})
-            neg_count = sum(1 for word in words if word in {"проблема", "плохо", "ошибка"})
+            pos_count = sum(1 for word in words if word in {"спасибо", "хорошо", "отлично", "круто", "понравилось"})
+            neg_count = sum(1 for word in words if word in {"плохо", "проблема", "ошибка", "ужасно", "раздражает"})
 
             if pos_count > neg_count:
                 tone_ru = "положительный"
@@ -55,52 +52,57 @@ def analyze_text(text: str) -> tuple[str, list[str]]:
             else:
                 tone_ru = "нейтральный"
 
-       #рекомен
-        words = text.lower().split()
+        
+        words = set(re.findall(r'\b\w+\b', text.lower()))
         recs = []
 
-        if tone_ru == "негативный" and not any(word in EMPATHY for word in words):
-            recs.append("Добавьте эмпатии: 'Понимаю вашу ситуацию' ")
+        if tone_ru == "негативный" and not (words & EMPATHY):
+            recs.append("Добавьте эмпатии: *«Понимаю вашу ситуацию»*, *«Сожалею, что возникла такая ситуация»*")
 
-        if not any(word in POLITE for word in words):
-            recs.append("Используйте вежливые слова:  'пожалуйста', 'спасибо'")
+        if not (words & POLITE):
+            recs.append("Используйте вежливые слова: *«пожалуйста»*, *«спасибо»*, *«благодарю»*")
 
-        if not any(word in NEXT_STEPS for word in words):
-            recs.append("Предложите следующий шаг: 'Я перезвоню', 'Отправлю вам'")
+        if not (words & NEXT_STEPS):
+            recs.append("Укажите следующий шаг: *«Я перезвоню»*, *«Отправлю файл»*, *«Решу сегодня»*")
 
         if not recs:
-            recs.append("Отличное общение! Продолжайте в том же духе")
+            recs.append("Отличное общение! Продолжайте в том же духе.")
 
         return tone_ru, recs[:2]
 
     except Exception as e:
         print(f"Ошибка анализа: {e}")
-        return "нейтральный", ["Ошибка анализа. Попробуйте другой текст"]
+        return "нейтральный", ["Ошибка анализа. Попробуйте другой текст."]
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 Привет! Я анализирую тональность разговоров.\n\n"
-        "Отправь мне текст разговора, и я определю тон общения + дам рекомендации."
+        "👋 Привет! Я анализирую тональность разговоров!\n\n"
+        "Отправь мне текст диалога, и я определю тон общения и дам рекомендации."
     )
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        if len(update.message.text) < 10:
-            await update.message.reply_text("📝 Напишите текст подлиннее для анализа")
+        text = update.message.text
+        if len(text) < 10:
+            await update.message.reply_text("📝 Напишите текст подлиннее для анализа (минимум 10 символов)")
             return
 
-        tone, recs = analyze_text(update.message.text)
+        tone, recs = analyze_text(text)
 
         reply = f" <b>Тон разговора:</b> {tone}\n\n"
         reply += " <b>Рекомендации:</b>\n"
 
-        for i, rec in enumerate(recs, 1):
-            reply += f"{i}. {rec}\n"
+        for rec in recs:
+            reply += f"{rec}\n"
 
+        if sentiment_analyzer:
+            reply += "\n <i>Анализ выполнен с помощью нейросети <code>blanchefort/rubert-base-cased-sentiment</code></i>"
+        else:
+            reply += "\n<i>Анализ выполнен по ключевым словам (нейросеть недоступна)</i>"
 
-        await update.message.reply_text(reply, parse_mode='HTML')
+        await update.message.reply_text(reply, parse_mode='HTML', disable_web_page_preview=True)
 
     except Exception as e:
         await update.message.reply_text("❌ Ошибка анализа. Попробуйте ещё раз.")
